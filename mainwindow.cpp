@@ -1,3 +1,28 @@
+/*
+ * Simple explanation of this file:
+ * --------------------------------
+ * This Qt file creates the screen shown in the demo.
+ *
+ * The older C program, fac_subs_decode_with_logging, talks to the Commsignia
+ * unit and prints simple JSON lines such as:
+ *
+ *   current light color
+ *   next light color
+ *   seconds remaining
+ *   intersection name
+ *   lane direction arrow
+ *
+ * This Qt program starts that C program in the background, reads those JSON
+ * lines, and updates the screen.
+ *
+ * In short:
+ *
+ *   C decoder program  --->  JSON text  --->  Qt user interface
+ *
+ * That is how the traffic-light circle, countdown, intersection name,
+ * and arrow appear in the window.
+ */
+
 #include "MainWindow.h"
 
 #include <QCoreApplication>
@@ -20,12 +45,18 @@
 #include <QVBoxLayout>
 
 namespace {
+// These names are used by Qt to remember saved settings
+// For example, the app remembers the SDK folder and the OBU address
 constexpr auto kSettingsOrg = "spat_viewer";
 constexpr auto kSettingsApp = "SPATViewer";
 constexpr auto kKeyExamplesPath = "backend/examplesWslPath";
 constexpr auto kKeyLastAddress = "device/lastAddress";
 constexpr auto kKeyAutoStart = "ui/autoStartOnLaunch";
 
+/*
+ * Make a small text label used for words like:
+ * "Now approaching:", "Current:", "Change to", and "seconds"
+ */
 QLabel *makeCaption(const QString &text, QWidget *parent)
 {
     auto *l = new QLabel(text, parent);
@@ -33,7 +64,10 @@ QLabel *makeCaption(const QString &text, QWidget *parent)
     return l;
 }
 
-/* MAP/XML sometimes carries "&" as a numeric or named entity; QLabel shows it literally otherwise. */
+/*
+ * Clean up the intersection name before showing it
+ * This makes names with "&" display normally on the screen
+ */
 QString normalizedIntersectionTitle(QString s)
 {
     s.replace(QStringLiteral("&#38;"), QStringLiteral("&"));
@@ -42,7 +76,10 @@ QString normalizedIntersectionTitle(QString s)
 }
 
 #ifdef Q_OS_WIN
-/* Allow either WSL or Windows-style paths in settings; normalize to /mnt/<drive>/... for WSL bash. */
+/*
+ * On Windows, the backend runs inside WSL
+ * This helper turns a Windows path like C:/Users/... into a WSL path like /mnt/c/Users/...
+ */
 QString toWslPath(QString in)
 {
     QString path = in.trimmed();
@@ -58,8 +95,12 @@ QString toWslPath(QString in)
     return QDir::cleanPath(path);
 }
 #endif
-} // namespace
+} 
 
+/*
+ * This is the main window constructor
+ * It builds the user interface seen in the screenshot
+ */
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_proc(nullptr)
@@ -70,11 +111,15 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setOrganizationName(QString::fromLatin1(kSettingsOrg));
     QCoreApplication::setApplicationName(QString::fromLatin1(kSettingsApp));
 
+    // Set the window name and starting size
     setWindowTitle(QStringLiteral("SPAT Viewer"));
     resize(680, 520);
+
+    // Hide the normal menu/status bars so the UI looks clean and simple
     menuBar()->hide();
     statusBar()->hide();
 
+    // This option lets the program connect automatically when it opens
     m_autoStartAct = new QAction(QStringLiteral("Connect automatically on startup"), this);
     m_autoStartAct->setCheckable(true);
     {
@@ -86,16 +131,22 @@ MainWindow::MainWindow(QWidget *parent)
         s.setValue(QString::fromLatin1(kKeyAutoStart), checked);
     });
 
+    // Create the main background area of the window
     auto *central = new QWidget(this);
     central->setStyleSheet(QStringLiteral("background-color: #1a1a1e;"));
     setCentralWidget(central);
+    // Right-clicking the window opens settings such as Start, Stop, SDK folder, and device IP
     central->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(central, &QWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
     auto *root = new QVBoxLayout(central);
     root->setSpacing(12);
     root->setContentsMargins(24, 20, 24, 20);
 
-    /* Row: Now approaching — title */
+    /*
+     * Top row of the UI:
+     * Shows "Now approaching:" followed by the intersection name
+     * In the screenshot, this is where "Tamarus St & Flamingo Rd" appears
+     */
     auto *approachRow = new QHBoxLayout();
     approachRow->addWidget(makeCaption(QStringLiteral("Now approaching:"), this));
     m_intersectionTitle = new QLabel(QStringLiteral("—"), this);
@@ -106,9 +157,14 @@ MainWindow::MainWindow(QWidget *parent)
     approachRow->addWidget(m_intersectionTitle, 1);
     root->addLayout(approachRow);
 
+    // Add the "Current:" text above the big traffic-light circle
     root->addSpacing(8);
     root->addWidget(makeCaption(QStringLiteral("Current:"), this));
 
+    /*
+     * Big traffic-light circle
+     * Its color changes to green, yellow, red, or gray based on the live SPaT data
+     */
     m_curDot = new QLabel(QStringLiteral("●"), this);
     m_curDot->setAlignment(Qt::AlignCenter);
     m_curDot->setMinimumHeight(220);
@@ -117,6 +173,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_curDot->setFont(dotFont);
     m_curDot->setStyleSheet(colorStyle(QStringLiteral("UNKNOWN"), true));
 
+    /*
+     * Lane direction arrow
+     * This shows whether the lane movement is straight, left, right, or U-turn
+     */
     m_laneArrow = new QLabel(laneArrowGlyph(QString()), this);
     m_laneArrow->setAlignment(Qt::AlignCenter);
     m_laneArrow->setMinimumWidth(120);
@@ -125,7 +185,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_laneArrow->setFont(arrowFont);
     m_laneArrow->setStyleSheet(QStringLiteral("color: #ecf0f1;"));
 
-    /* Circle left-middle, arrow right-middle, equal stretch so gap between is even. */
+    /*
+     * Put the big light and arrow next to each other
+     * This is the middle part of the screenshot
+     */
     auto *signalRow = new QHBoxLayout();
     signalRow->setSpacing(0);
     signalRow->addStretch(1);
@@ -137,7 +200,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     root->addStretch(1);
 
-    /* Bottom row: next phase and countdown */
+    /*
+     * Bottom row of the UI:
+     * Shows the next light color and how many seconds are left
+     * In the screenshot, this is the "Change to yellow in 5 seconds" section
+     */
     auto *changeRow = new QHBoxLayout();
     changeRow->setSpacing(10);
     changeRow->addWidget(makeCaption(QStringLiteral("Change to"), this));
@@ -157,6 +224,10 @@ MainWindow::MainWindow(QWidget *parent)
     changeRow->addStretch(1);
     root->addLayout(changeRow);
 
+    /*
+     * Small status message at the bottom
+     * This tells the user if the backend is connected, waiting, stopped, or has an error
+     */
     m_statusLine = new QLabel(QStringLiteral(
         "Status: Right-click → SDK examples folder & device address, then Start connection "
         "(or save both to auto-connect on launch)."), this);
@@ -164,9 +235,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_statusLine->setStyleSheet(QStringLiteral("color: #8a8a95; font-size: 13px;"));
     root->addWidget(m_statusLine);
 
+    // After the window opens, try to connect automatically if the user saved that option
     QTimer::singleShot(0, this, &MainWindow::tryAutoStart);
 }
 
+/*
+ * This function creates the right-click menu
+ * The user can start/stop the connection and set the SDK folder or device address
+ */
 void MainWindow::showContextMenu(const QPoint &pos)
 {
     QMenu menu(this);
@@ -187,6 +263,10 @@ void MainWindow::showContextMenu(const QPoint &pos)
         stopBackend();
 }
 
+/*
+ * Update the small status text at the bottom of the screen
+ * It also updates the window title with the latest status
+ */
 void MainWindow::setStatus(const QString &text)
 {
     if(m_statusLine) {
@@ -201,18 +281,28 @@ void MainWindow::setStatus(const QString &text)
     setWindowTitle(QStringLiteral("SPAT Viewer — %1").arg(tail));
 }
 
+/*
+ * Read the saved folder path where the backend C decoder program is located
+ */
 QString MainWindow::examplesWslPath() const
 {
     QSettings s;
     return s.value(QString::fromLatin1(kKeyExamplesPath)).toString().trimmed();
 }
 
+/*
+ * Read the saved IP address or hostname of the Commsignia device
+ */
 QString MainWindow::deviceAddress() const
 {
     QSettings s;
     return s.value(QString::fromLatin1(kKeyLastAddress)).toString().trimmed();
 }
 
+/*
+ * If the user enabled auto-start and saved the needed settings,
+ * start the backend automatically
+ */
 void MainWindow::tryAutoStart()
 {
     QSettings s;
@@ -225,6 +315,10 @@ void MainWindow::tryAutoStart()
     startBackend();
 }
 
+/*
+ * Ask the user where the SDK examples folder is
+ * This is needed so Qt can find and run fac_subs_decode_with_logging
+ */
 void MainWindow::openExamplesFolderSettings()
 {
     const QString current = examplesWslPath();
@@ -247,6 +341,10 @@ void MainWindow::openExamplesFolderSettings()
     }
 }
 
+/*
+ * Ask the user for the Commsignia OBU/RSU address
+ * Example: 192.168.1.54
+ */
 void MainWindow::openDeviceAddressSettings()
 {
     const QString current = deviceAddress();
@@ -262,11 +360,23 @@ void MainWindow::openDeviceAddressSettings()
     }
 }
 
+/*
+ * When the window closes, stop the backend program too
+ */
 MainWindow::~MainWindow()
 {
     stopBackend();
 }
 
+/*
+ * Start the C decoder program in the background
+ *
+ * This is the bridge between the old terminal program and the new GUI:
+ * - the C program receives V2X data
+ * - the C program prints JSON lines
+ * - this Qt program reads those JSON lines
+ * - the UI updates the circle, arrow, countdown, and intersection name
+ */
 void MainWindow::startBackend()
 {
     if(m_proc)
@@ -302,6 +412,7 @@ void MainWindow::startBackend()
     QSettings s;
     s.setValue(QString::fromLatin1(kKeyLastAddress), ip);
 
+    // QProcess lets this Qt app run the C decoder program in the background
     m_proc = new QProcess(this);
     m_errBuf.clear();
 #ifdef Q_OS_WIN
@@ -312,7 +423,7 @@ void MainWindow::startBackend()
                               "./fac_subs_decode_with_logging %2 --json")
                               .arg(escaped, ip);
     m_proc->setProgram(QStringLiteral("wsl"));
-    /* -ilc: login + interactive bash so ~/.bashrc (e.g. LD_LIBRARY_PATH) matches a normal terminal. */
+    // -ilc: login + interactive bash so ~/.bashrc (e.g. LD_LIBRARY_PATH) matches a normal terminal.
     m_proc->setArguments({QStringLiteral("bash"), QStringLiteral("-ilc"), inner});
 #else
     const QString decoder =
@@ -322,12 +433,15 @@ void MainWindow::startBackend()
     m_proc->setWorkingDirectory(examples);
 #endif
 
+    // When the backend prints normal JSON output, onStdout() reads it
+    // When the backend prints status/error text, onStderr() reads it
     connect(m_proc, &QProcess::readyReadStandardOutput, this, &MainWindow::onStdout);
     connect(m_proc, &QProcess::readyReadStandardError, this, &MainWindow::onStderr);
     connect(m_proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
             &MainWindow::onProcessFinished);
     connect(m_proc, &QProcess::errorOccurred, this, &MainWindow::onProcessError);
 
+    // Start the backend program
     m_buf.clear();
     m_proc->start();
     if(!m_proc->waitForStarted(5000)) {
@@ -348,6 +462,9 @@ void MainWindow::startBackend()
     setStatus(QStringLiteral("Connecting…"));
 }
 
+/*
+ * Stop the backend C decoder program
+ */
 void MainWindow::stopBackend()
 {
     if(!m_proc)
@@ -360,6 +477,10 @@ void MainWindow::stopBackend()
     setStatus(QStringLiteral("Stopped."));
 }
 
+/*
+ * Read error/status messages from the backend
+ * These are shown in the small status line at the bottom of the GUI
+ */
 void MainWindow::onStderr()
 {
     if(!m_proc)
@@ -377,6 +498,19 @@ void MainWindow::onStderr()
     }
 }
 
+/*
+ * Read normal output from the backend
+ *
+ * The backend sends JSON lines
+ * Each JSON line describes one update, such as:
+ *   current color
+ *   next color
+ *   seconds remaining
+ *   intersection name
+ *   arrow direction
+ *
+ * This function reads those lines and decides how to update the GUI
+ */
 void MainWindow::onStdout()
 {
     if(!m_proc)
@@ -391,18 +525,22 @@ void MainWindow::onStdout()
         line = line.trimmed();
         if(line.isEmpty())
             continue;
+        // Only handle JSON lines. JSON lines start with "{". Other text is ignored
         if(!line.startsWith('{'))
             continue;
+        // Turn the JSON text into a Qt JSON object
         QJsonParseError pe;
         QJsonDocument doc = QJsonDocument::fromJson(line, &pe);
         if(pe.error != QJsonParseError::NoError || !doc.isObject())
             continue;
         QJsonObject o = doc.object();
         const QString t = o.value(QStringLiteral("type")).toString();
+        // The backend is running and ready to receive signal updates
         if(t == QStringLiteral("ready")) {
             setStatus(QStringLiteral("Connected — waiting for signal updates."));
             continue;
         }
+        // MAP update: use it to show the intersection ID if a name is not available yet
         if(t == QStringLiteral("map")) {
             const int iid = o.value(QStringLiteral("intersectionId")).toInt(-1);
             if(iid >= 0)
@@ -414,11 +552,16 @@ void MainWindow::onStdout()
         if(t == QStringLiteral("position")) {
             continue;
         }
+        // Signal-group update: this contains the live light state shown on the UI
         if(o.contains(QStringLiteral("sg")))
             applyState(o);
     }
 }
 
+/*
+ * This runs when the backend program stops
+ * It shows a message so the user knows the connection ended
+ */
 void MainWindow::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 {
     Q_UNUSED(status);
@@ -442,6 +585,9 @@ void MainWindow::onProcessFinished(int exitCode, QProcess::ExitStatus status)
     m_errBuf.clear();
 }
 
+/*
+ * This runs if Qt cannot start or communicate with the backend
+ */
 void MainWindow::onProcessError(QProcess::ProcessError err)
 {
 #ifdef Q_OS_WIN
@@ -452,6 +598,14 @@ void MainWindow::onProcessError(QProcess::ProcessError err)
     setStatus(QStringLiteral("Connection error (%1). %2").arg(static_cast<int>(err)).arg(hint));
 }
 
+/*
+ * Convert a simple direction word into an arrow symbol
+ *
+ * Example:
+ *   "left"     ->
+ *   "right"    <-
+ *   "straight" ↑
+ */
 QString MainWindow::laneArrowGlyph(const QString &arrowKey)
 {
     const QString k = arrowKey.trimmed().toLower();
@@ -466,6 +620,14 @@ QString MainWindow::laneArrowGlyph(const QString &arrowKey)
     return QStringLiteral("↑");
 }
 
+/*
+ * Convert a color name into the style used by the circle on the screen
+ *
+ * Example:
+ *   "GREEN"  makes the circle green
+ *   "YELLOW" makes the circle yellow
+ *   "RED"    makes the circle red
+ */
 QString MainWindow::colorStyle(const QString &name, bool largeDot)
 {
     if(largeDot) {
@@ -486,8 +648,20 @@ QString MainWindow::colorStyle(const QString &name, bool largeDot)
     return QStringLiteral("color: #95a5a6;");
 }
 
+/*
+ * Apply one live signal update to the screen
+ *
+ * This is the main function that makes the screenshot happen
+ * It takes the JSON data from the backend and updates:
+ *   - intersection name
+ *   - current light circle
+ *   - next light circle
+ *   - countdown seconds
+ *   - lane arrow
+ */
 void MainWindow::applyState(const QJsonObject &o)
 {
+    // Get the intersection name or ID from the backend
     const QString ixName = o.value(QStringLiteral("intersection_name")).toString().trimmed();
     const int ixId = o.value(QStringLiteral("intersection_id")).toInt(-99999);
     if(!ixName.isEmpty() && ixName != QStringLiteral("Unknown intersection"))
@@ -496,6 +670,7 @@ void MainWindow::applyState(const QJsonObject &o)
         m_intersectionTitle->setText(QStringLiteral("Intersection %1").arg(ixId));
     /* else keep previous title until a line includes a name or id */
 
+    // Get the live values that control the screen
     QString cur = o.value(QStringLiteral("current")).toString();
     QString next = o.value(QStringLiteral("next")).toString();
     int sec = o.value(QStringLiteral("sec")).toInt(-999);
@@ -503,10 +678,12 @@ void MainWindow::applyState(const QJsonObject &o)
     if(arrow.isEmpty())
         arrow = o.value(QStringLiteral("laneArrow")).toString();
 
+    // Update the large current light, the small next light, and the arrow
     m_curDot->setStyleSheet(colorStyle(cur, true));
     m_nextDot->setStyleSheet(colorStyle(next, false));
     m_laneArrow->setText(laneArrowGlyph(arrow));
 
+    // Update the countdown number
     if(sec >= 0)
         m_secValueLabel->setText(QString::number(sec));
     else
