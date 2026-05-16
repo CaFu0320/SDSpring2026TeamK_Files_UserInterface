@@ -1,3 +1,4 @@
+//tells Qt what the window contains
 #pragma once
 
 #include <QByteArray>
