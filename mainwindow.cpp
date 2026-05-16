@@ -1,6 +1,5 @@
 /*
  * Simple explanation of this file:
- * --------------------------------
  * This Qt file creates the screen shown in the demo.
  *
  * The older C program, fac_subs_decode_with_logging, talks to the Commsignia
