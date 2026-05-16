@@ -1,3 +1,6 @@
+tells Qt Creator how to compile everything
+
+
 cmake_minimum_required(VERSION 3.19)
 project(qt_spat_viewer LANGUAGES CXX)
 
