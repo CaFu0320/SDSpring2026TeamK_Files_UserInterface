@@ -1,3 +1,4 @@
+//This is the code that begins our app
 #include "mainwindow.h"
 
 #include <QApplication>
